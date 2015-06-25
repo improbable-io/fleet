@@ -21,6 +21,8 @@ import (
 	"github.com/coreos/fleet/log"
 	"github.com/coreos/fleet/registry"
 	"github.com/coreos/fleet/version"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func NewServeMux(reg registry.Registry) http.Handler {
@@ -36,6 +38,8 @@ func NewServeMux(reg registry.Registry) http.Handler {
 	}
 
 	sm.HandleFunc("/", baseHandler)
+
+	sm.Handle("/metrics", prometheus.Handler())
 
 	hdlr := http.Handler(sm)
 	hdlr = &loggingMiddleware{hdlr}
