@@ -15,9 +15,12 @@
 package registry
 
 import (
+	"time"
+
 	etcd "github.com/coreos/fleet/Godeps/_workspace/src/github.com/coreos/etcd/client"
 
 	"github.com/coreos/fleet/log"
+	"github.com/coreos/fleet/metrics"
 	"github.com/coreos/fleet/unit"
 )
 
@@ -39,7 +42,9 @@ func (r *EtcdRegistry) storeOrGetUnitFile(u unit.UnitFile) (err error) {
 	opts := &etcd.SetOptions{
 		PrevExist: etcd.PrevNoExist,
 	}
+	start := time.Now()
 	_, err = r.kAPI.Set(r.ctx(), key, val, opts)
+	metrics.RegistryDuration(metrics.Set, start)
 	// unit is already stored
 	if isEtcdError(err, etcd.ErrorCodeNodeExist) {
 		// TODO(jonboulle): verify more here?
@@ -54,7 +59,9 @@ func (r *EtcdRegistry) getUnitByHash(hash unit.Hash) *unit.UnitFile {
 	opts := &etcd.GetOptions{
 		Recursive: true,
 	}
+	start := time.Now()
 	resp, err := r.kAPI.Get(r.ctx(), key, opts)
+	metrics.RegistryDuration(metrics.Get, start)
 	if err != nil {
 		if isEtcdError(err, etcd.ErrorCodeKeyNotFound) {
 			err = nil

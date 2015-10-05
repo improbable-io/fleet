@@ -20,6 +20,7 @@ import (
 
 	"github.com/coreos/fleet/log"
 	"github.com/coreos/fleet/machine"
+	"github.com/coreos/fleet/metrics"
 	"github.com/coreos/fleet/pkg"
 	"github.com/coreos/fleet/pkg/lease"
 	"github.com/coreos/fleet/registry"
@@ -81,6 +82,10 @@ func (e *Engine) Run(ival time.Duration, stop chan bool) {
 			log.Infof("Engine leadership changed from %s to %s", e.lease.MachineID(), l.MachineID())
 		}
 
+		if l != nil {
+			metrics.EngineLeader(l.MachineID())
+		}
+
 		e.lease = l
 
 		if !isLeader(e.lease, machID) {
@@ -108,6 +113,7 @@ func (e *Engine) Run(ival time.Duration, stop chan bool) {
 		start := time.Now()
 		e.rec.Reconcile(e, abort)
 		close(monitor)
+		metrics.EngineScheduleDuration(metrics.Reconcile, start)
 		elapsed := time.Now().Sub(start)
 
 		msg := fmt.Sprintf("Engine completed reconciliation in %s", elapsed)
