@@ -3,13 +3,15 @@
 ORG_PATH="github.com/coreos"
 REPO_PATH="${ORG_PATH}/fleet"
 
+set -x
+
 if [ ! -h gopath/src/${REPO_PATH} ]; then
 	mkdir -p gopath/src/${ORG_PATH}
 	ln -s ../../../.. gopath/src/${REPO_PATH} || exit 255
 fi
 
 export GOBIN=${PWD}/bin
-export GOPATH=$GOPATH:${PWD}/gopath
+export GOPATH=${PWD}/gopath:$GOPATH
 
 eval $(go env)
 
