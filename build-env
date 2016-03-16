@@ -15,7 +15,7 @@ function go_linker_dashX {
 }
 
 export GOBIN=${PWD}/bin
-export GOPATH=${PWD}/gopath
+export GOPATH=${PWD}/gopath:$GOPATH
 export GLDFLAGS="-X $(go_linker_dashX github.com/coreos/fleet/version.Version ${VERSION})"
 eval $(go env)
 export PATH="${GOROOT}/bin:${PATH}"
