@@ -19,8 +19,9 @@ github.com/prometheus/common/model 40456948a47496dc22168e6af39297a2f8fbf38c
 github.com/prometheus/procfs 406e5b7bfd8201a36e2bb5f7bdae0b03380c2ce8
 github.com/rakyll/globalconf fd9ff89130a682478a0c94e893ff4affe570b002
 github.com/rakyll/goini 907cca0f578a5316fb864ec6992dc3d9730ec58c
-github.com/vishvananda/netlink 4fdf23c882685717a2a750114bdc904afeafc16b
-github.com/vishvananda/netlink/nl 4fdf23c882685717a2a750114bdc904afeafc16b
+github.com/vishvananda/netlink fe3b5664d23a11b52ba59bece4ff29c52772a56b
+github.com/vishvananda/netlink/nl fe3b5664d23a11b52ba59bece4ff29c52772a56b
+github.com/vishvananda/netns 54f0e4339ce73702a0607f49922aaa1e749b418d
 golang.org/x/crypto/curve25519 9e7f5dc375abeb9619ea3c5c58502c428f457aa2
 golang.org/x/crypto/ssh 9e7f5dc375abeb9619ea3c5c58502c428f457aa2
 golang.org/x/crypto/ssh/agent 9e7f5dc375abeb9619ea3c5c58502c428f457aa2

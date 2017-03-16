@@ -13,7 +13,11 @@ import (
 	"github.com/vishvananda/netns"
 )
 
-const SizeofLinkStats = 0x5c
+const (
+	SizeofLinkStats32 = 0x5c
+	SizeofLinkStats64 = 0xd8
+	IFLA_STATS64      = 0x17 // syscall pkg does not contain this one
+)
 
 const (
 	TUNTAP_MODE_TUN  TuntapMode = syscall.IFF_TUN
@@ -25,7 +29,6 @@ const (
 	TUNTAP_ONE_QUEUE TuntapFlag = syscall.IFF_ONE_QUEUE
 )
 
-var native = nl.NativeEndian()
 var lookupByDump = false
 
 var macvlanModes = [...]uint32{
@@ -787,6 +790,8 @@ func (h *Handle) LinkAdd(link Link) error {
 		addIptunAttrs(iptun, linkInfo)
 	} else if vti, ok := link.(*Vti); ok {
 		addVtiAttrs(vti, linkInfo)
+	} else if vrf, ok := link.(*Vrf); ok {
+		addVrfAttrs(vrf, linkInfo)
 	}
 
 	req.AddData(linkInfo)
@@ -953,7 +958,7 @@ func execGetLink(req *nl.NetlinkRequest) (Link, error) {
 		return nil, fmt.Errorf("Link not found")
 
 	case len(msgs) == 1:
-		return LinkDeserialize(msgs[0])
+		return LinkDeserialize(nil, msgs[0])
 
 	default:
 		return nil, fmt.Errorf("More than one link found")
@@ -962,7 +967,7 @@ func execGetLink(req *nl.NetlinkRequest) (Link, error) {
 
 // linkDeserialize deserializes a raw message received from netlink into
 // a link object.
-func LinkDeserialize(m []byte) (Link, error) {
+func LinkDeserialize(hdr *syscall.NlMsghdr, m []byte) (Link, error) {
 	msg := nl.DeserializeIfInfomsg(m)
 
 	attrs, err := nl.ParseRouteAttr(m[msg.Len():])
@@ -974,8 +979,12 @@ func LinkDeserialize(m []byte) (Link, error) {
 	if msg.Flags&syscall.IFF_PROMISC != 0 {
 		base.Promisc = 1
 	}
-	var link Link
-	linkType := ""
+	var (
+		link     Link
+		stats32  []byte
+		stats64  []byte
+		linkType string
+	)
 	for _, attr := range attrs {
 		switch attr.Attr.Type {
 		case syscall.IFLA_LINKINFO:
@@ -1014,6 +1023,8 @@ func LinkDeserialize(m []byte) (Link, error) {
 						link = &Iptun{}
 					case "vti":
 						link = &Vti{}
+					case "vrf":
+						link = &Vrf{}
 					default:
 						link = &GenericLink{LinkType: linkType}
 					}
@@ -1041,6 +1052,8 @@ func LinkDeserialize(m []byte) (Link, error) {
 						parseIptunData(link, data)
 					case "vti":
 						parseVtiData(link, data)
+					case "vrf":
+						parseVrfData(link, data)
 					}
 				}
 			}
@@ -1067,15 +1080,35 @@ func LinkDeserialize(m []byte) (Link, error) {
 		case syscall.IFLA_IFALIAS:
 			base.Alias = string(attr.Value[:len(attr.Value)-1])
 		case syscall.IFLA_STATS:
-			base.Statistics = parseLinkStats(attr.Value[:])
+			stats32 = attr.Value[:]
+		case IFLA_STATS64:
+			stats64 = attr.Value[:]
 		case nl.IFLA_XDP:
 			xdp, err := parseLinkXdp(attr.Value[:])
 			if err != nil {
 				return nil, err
 			}
 			base.Xdp = xdp
+		case syscall.IFLA_PROTINFO | syscall.NLA_F_NESTED:
+			if hdr != nil && hdr.Type == syscall.RTM_NEWLINK &&
+				msg.Family == syscall.AF_BRIDGE {
+				attrs, err := nl.ParseRouteAttr(attr.Value[:])
+				if err != nil {
+					return nil, err
+				}
+				base.Protinfo = parseProtinfo(attrs)
+			}
+		case syscall.IFLA_OPERSTATE:
+			base.OperState = LinkOperState(uint8(attr.Value[0]))
 		}
 	}
+
+	if stats64 != nil {
+		base.Statistics = parseLinkStats64(stats64)
+	} else if stats32 != nil {
+		base.Statistics = parseLinkStats32(stats32)
+	}
+
 	// Links that don't have IFLA_INFO_KIND are hardware devices
 	if link == nil {
 		link = &Device{}
@@ -1108,7 +1141,7 @@ func (h *Handle) LinkList() ([]Link, error) {
 
 	var res []Link
 	for _, m := range msgs {
-		link, err := LinkDeserialize(m)
+		link, err := LinkDeserialize(nil, m)
 		if err != nil {
 			return nil, err
 		}
@@ -1157,7 +1190,7 @@ func linkSubscribe(newNs, curNs netns.NsHandle, ch chan<- LinkUpdate, done <-cha
 			}
 			for _, m := range msgs {
 				ifmsg := nl.DeserializeIfInfomsg(m.Data)
-				link, err := LinkDeserialize(m.Data)
+				link, err := LinkDeserialize(&m.Header, m.Data)
 				if err != nil {
 					return
 				}
@@ -1409,26 +1442,6 @@ func linkFlags(rawFlags uint32) net.Flags {
 	return f
 }
 
-func htonl(val uint32) []byte {
-	bytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(bytes, val)
-	return bytes
-}
-
-func htons(val uint16) []byte {
-	bytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(bytes, val)
-	return bytes
-}
-
-func ntohl(buf []byte) uint32 {
-	return binary.BigEndian.Uint32(buf)
-}
-
-func ntohs(buf []byte) uint16 {
-	return binary.BigEndian.Uint16(buf)
-}
-
 func addGretapAttrs(gretap *Gretap, linkInfo *nl.RtAttr) {
 	data := nl.NewRtAttrChild(linkInfo, nl.IFLA_INFO_DATA, nil)
 
@@ -1502,8 +1515,12 @@ func parseGretapData(link Link, data []syscall.NetlinkRouteAttr) {
 	}
 }
 
-func parseLinkStats(data []byte) *LinkStatistics {
-	return (*LinkStatistics)(unsafe.Pointer(&data[0:SizeofLinkStats][0]))
+func parseLinkStats32(data []byte) *LinkStatistics {
+	return (*LinkStatistics)((*LinkStatistics32)(unsafe.Pointer(&data[0:SizeofLinkStats32][0])).to64())
+}
+
+func parseLinkStats64(data []byte) *LinkStatistics {
+	return (*LinkStatistics)((*LinkStatistics64)(unsafe.Pointer(&data[0:SizeofLinkStats64][0])))
 }
 
 func addXdpAttrs(xdp *LinkXdp, req *nl.NetlinkRequest) {
@@ -1603,6 +1620,23 @@ func parseVtiData(link Link, data []syscall.NetlinkRouteAttr) {
 			vti.IKey = ntohl(datum.Value[0:4])
 		case nl.IFLA_VTI_OKEY:
 			vti.OKey = ntohl(datum.Value[0:4])
+		}
+	}
+}
+
+func addVrfAttrs(vrf *Vrf, linkInfo *nl.RtAttr) {
+	data := nl.NewRtAttrChild(linkInfo, nl.IFLA_INFO_DATA, nil)
+	b := make([]byte, 4)
+	native.PutUint32(b, uint32(vrf.Table))
+	nl.NewRtAttrChild(data, nl.IFLA_VRF_TABLE, b)
+}
+
+func parseVrfData(link Link, data []syscall.NetlinkRouteAttr) {
+	vrf := link.(*Vrf)
+	for _, datum := range data {
+		switch datum.Attr.Type {
+		case nl.IFLA_VRF_TABLE:
+			vrf.Table = native.Uint32(datum.Value[0:4])
 		}
 	}
 }
